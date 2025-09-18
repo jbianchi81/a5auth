@@ -1,0 +1,16 @@
+{
+  // Visit https://aka.ms/tsconfig to read more about this file
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "ES2020",
+    "target": "ES2020",
+    "declaration": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "strict": true,
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true,
+    "moduleResolution": "node"
+  },
+  "include": ["src"]
+}
