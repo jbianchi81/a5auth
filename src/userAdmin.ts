@@ -6,6 +6,7 @@ import { createHash } from 'crypto'
 const internal = {}
 import { parse } from 'csv-string'
 import {Request, Response} from 'express'
+import { Client } from 'pg'
 // API
 
 export async function getUsers(req : Request, res : Response) {
@@ -23,60 +24,67 @@ export async function getUsers(req : Request, res : Response) {
 }
 
 export async function createUser(req : Request,res : Response) {    // ?password=&role=reader
+    if(!req.params || !req.params.username) {
+        throw new Error("Missing username")
+    }
     var password = (req.query && req.query.password) ? req.query.password : (req.body && req.body.password) ? req.body.password : undefined
     var role = (req.query && req.query.role) ? req.query.role : (req.body && req.body.role) ? req.body.role : undefined
     var token = (req.query && req.query.token) ? req.query.token : (req.body && req.body.token) ? req.body.token : undefined
-    const user = new User({
+    const user_ = new User({
         name: req.params.username,
         role: role,
         password: password,
         token: token
     })
-    return user.create()
-       .then(users=>{
-        if(!users || !users.length) {
-            res.status(400).send("Error: no user updated")
-            return
-        }
-        if(req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
-            if(users[0]) {
-                console.log(users[0])
-                var data = users[0]
-                data.base_url = config.rest.base_url
-                res.render('user_updated',data)
-            } else {
-                res.status(400).send("Error: no user updated")
-            }
-        } else {
-            res.send(users)
-        }
-    })
-    .catch(e=>{
+    try {
+        var user = await user_.create()
+    } catch(e) {
         console.error(e)
-        res.status(400).send(e.toString())
-    })
+        res.status(400).send("Error: no user updated")
+        return
+    }
+    if(req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
+        console.debug(user)
+        var data : any = {...user}
+        data.base_url = config.rest.base_url
+        res.render('user_updated',data)
+    } else {
+        res.send(user)
+    }
 }
 
-internal.getUser = function (req,res) {
+export async function getUser(req : Request, res : Response) {
+    if(!pool) {
+        res.status(500).send("Database connection not established")
+        return
+    }
     if(! req.params) {
         res.status(400).send("missing params")
         return
     }
-    if(req.user.role!="admin" && req.params.username!=req.user.username) {
+    if(!req.user) {
         res.status(408).send("Unauthorized")
         return
     }
-    pool.query("SELECT id,name,role from users where name=$1",[req.params.username])
-    .then(result=>{
+    const user = req.user as User_
+    if(user.role!="admin" && req.params.username!=user.username) {
+        res.status(408).send("Unauthorized")
+        return
+    }
+    try {
+        const result = await pool.query("SELECT id,name,role from users where name=$1",[req.params.username])
         res.send(result.rows)
-    })
-    .catch(e=>{
+    } catch(e) {
         console.error(e)
-        res.status(400).send(e.toString())
-    })
+        res.status(400).send(e!.toString())
+    }
 }
 
-internal.userChangePassword = function (req,res) {
+export async function userChangePassword(req : Request,res : Response) {
+    if(!pool) {
+        res.status(500).send("Database connection not established")
+        return
+    }
     if(!req.body) {
         res.status(400).send("missing parameters")
         return
@@ -85,83 +93,94 @@ internal.userChangePassword = function (req,res) {
         res.status(400).send("username missing")
         return
     }
-    if(req.user.role!="admin" && req.body.username!=req.user.username) {
+    const user = req.user as User_
+    if(user.role!="admin" && req.body.username!=user.username) {
         res.status(408).send("Unauthorized")
         return
     }
-    pool.query("select * from users where name=$1",[req.body.username])
-    .then(result=>{
-        if(!result.rows || result.rows.length==0) {
-            res.status(400).send("User not found")
+    const result = await pool.query("select * from users where name=$1",[req.body.username])
+    if(!result.rows || result.rows.length==0) {
+        res.status(400).send("User not found")
+        return
+    }
+    var old_user = result.rows[0]
+    if(user.role!="admin" && old_user.protected) {
+        res.status(401).send("User protected")
+        return
+    }
+    var query
+    if(!req.body.newpassword) {
+        if(!req.body.newtoken) {
+            res.status(400).send("New password and/or token missing")
             return
         }
-        var old_user = result.rows[0]
-        if(req.user.role!="admin" && old_user.protected) {
-            res.status(401).send("User protected")
+        if(req.body.newtoken == "") {
+            res.status(400).send("New token is empty string")
             return
         }
-        var query
-        if(!req.body.newpassword) {
-            if(!req.body.newtoken) {
-                res.status(400).send("New password and/or token missing")
-                return
-            }
-            if(req.body.newtoken == "") {
-                res.status(400).send("New token is empty string")
-                return
-            }
-            query = pool.query("UPDATE users SET token=$1 WHERE name=$2 RETURNING name,pass_enc,token,role",[createHash('sha256').update(req.body.newtoken).digest('hex'),req.body.username])
-        } else if (req.body.newtoken && req.body.newtoken != "") {
-            query = pool.query("UPDATE users SET pas_enc=$1, token=$2 WHERE name=$3 RETURNING name,pass_enc,token,role",[createHash('sha256').update(req.body.newpassword).digest('hex'),createHash('sha256').update(req.body.newtoken).digest('hex'),req.body.username])
+        query = pool.query("UPDATE users SET token=$1 WHERE name=$2 RETURNING name,pass_enc,token,role",[createHash('sha256').update(req.body.newtoken).digest('hex'),req.body.username])
+    } else if (req.body.newtoken && req.body.newtoken != "") {
+        query = pool.query("UPDATE users SET pas_enc=$1, token=$2 WHERE name=$3 RETURNING name,pass_enc,token,role",[createHash('sha256').update(req.body.newpassword).digest('hex'),createHash('sha256').update(req.body.newtoken).digest('hex'),req.body.username])
+    } else {
+        query = pool.query("UPDATE users set pass_enc=$1 where name=$2 RETURNING name,pass_enc,role",[createHash('sha256').update(req.body.newpassword).digest('hex'),req.body.username])
+    }
+    try {
+        const result = await query
+        if(!result) {
+            res.status(400).send("Input error")
+            return
+        }
+        if(result.rows.length==0) {
+            res.status(400).send("Nothing updated")
+            return
+        }
+        if(req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
+            var data = result.rows[0]
+            data.base_url = config.rest.base_url
+            res.render('user_updated',data)
         } else {
-            query = pool.query("UPDATE users set pass_enc=$1 where name=$2 RETURNING name,pass_enc,role",[createHash('sha256').update(req.body.newpassword).digest('hex'),req.body.username])
+            //~ console.log({user:result.rows[0]})
+            res.send("Password y/o token actualizado")
         }
-        return query.then(result=>{
-            if(!result) {
-                res.status(400).send("Input error")
-                return
-            }
-            if(result.rows.length==0) {
-                res.status(400).send("Nothing updated")
-                return
-            }
-            if(req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
-                var data = result.rows[0]
-                data.base_url = config.rest.base_url
-                res.render('user_updated',data)
-            } else {
-                //~ console.log({user:result.rows[0]})
-                res.send("Password y/o token actualizado")
-            }
-        })
-    })
-    .catch(e=>{
+    } catch (e) {
         console.error(e)
-        res.status(400).send(e.toString())
-    })
+        res.status(400).send(e!.toString())
+    }
 }
 
-internal.deleteUser = async function (req,res) {
+export async function deleteUser(req : Request,res : Response) {
+    if(!pool) {
+        res.status(500).send("Database connection not established")
+        return
+    }
     if(!req.params || !req.params.username) {
         res.status(400).send("parameter username missing")
         return
     }
-    const users = await internal.user.delete({name:req.params.username})
-    if(!users || users.length==0) {
+    const users = await User.delete({name:req.params.username})
+    if(!users.length) {
+        res.status(400).send("User " + req.params.username + " not found")
+        return
+    }
+    if(!users.length) {
         res.status(400).send("User " + req.params.username + " not found")
         return
     }
     console.log({deletedUsers:users})
-    res.send("User " + users[0].name + " deleted")
-    return
+    res.send("User " + users[0]!.name + " deleted")
 }
 
 // GUI
 
-internal.viewUser = function (req,res) {
+export async function viewUser(req : Request,res : Response) {
+    if(!pool) {
+        res.status(500).send("Database connection not established")
+        return
+    }
     var username = req.params.username
-    if(!req.user || username != req.user.username) {
-        if(!config.rest.skip_authentication && (!req.user || req.user.role!="admin")) {
+    const user = req.user as User_
+    if(!req.user || username != user.username) {
+        if(!config.rest.skip_authentication && (!user || user.role!="admin")) {
             res.status(408).send("Must be admin to enter this user's config")
             return
         }
@@ -169,40 +188,74 @@ internal.viewUser = function (req,res) {
     } else {
         console.log("user " + username + " entering config")
     } 
-    pool.query("SELECT id,name username,role,protected from users where name=$1",[username])
-    .then(result=>{
+    try {
+        const result = await pool.query("SELECT id,name username,role,protected from users where name=$1",[username])
         if(result.rows.length==0) {
             res.status(404).send("user not found")
             return
         }
-        var data = {user:result.rows[0],loggedAs: (req.user) ? req.user.username : undefined, isAdmin: (req.user && req.user.role == "admin"), protected: ((!req.user || req.user.role != "admin") && result.rows[0].protected), base_url: config.rest.base_url}
+        var data = {user:result.rows[0],loggedAs: (req.user) ? user.username : undefined, isAdmin: (req.user && user.role == "admin"), protected: ((!req.user || user.role != "admin") && result.rows[0].protected), base_url: config.rest.base_url}
         res.render('usuario',data)
-    })
-    .catch(e=>{
+    } catch(e) {
         console.error(e)
-        res.status(400).send(e.toString())
-    })
+        res.status(400).send(e!.toString())
+    }
 }
-internal.viewUsers = function (req,res) {
-    pool.query("SELECT id,name username,role from users order by id")
-    .then(result=>{
+
+export async function viewUsers(req : Request,res : Response) {
+    if(!pool) {
+        res.status(500).send("Database connection not established")
+        return
+    }
+    const user = req.user as User_
+    try {
+        const result = await pool.query("SELECT id,name username,role from users order by id")
         if(result.rows.length==0) {
             // res.status(404).send("users not found")
             console.debug("No users found")
             // return
         }
-        var data = {users:result.rows,loggedAs: (req.user) ? req.user.username : undefined, base_url: config.rest.base_url}
+        var data = {users:result.rows,loggedAs: (req.user) ? user.username : undefined, base_url: config.rest.base_url}
         res.render('usuarios',data)
-    })
-    .catch(e=>{
+    } catch(e) {
         console.error(e)
-        res.status(400).send(e.toString())
-    })
+        res.status(400).send(e!.toString())
+    }
 }
 
-internal.newUserForm = function(req,res) {
-    var data = {loggedAs: (req.user) ? req.user.username : undefined, base_url: config.rest.base_url}
+export function newUserForm(req : Request, res : Response) {
+    const user = req.user as User_
+    var data = {loggedAs: (req.user) ? user.username : undefined, base_url: config.rest.base_url}
     res.render('usuarionuevo',data)
+}
+
+interface UserFields {
+    id?: number, 
+    name: string, 
+    role?: string, 
+    password?: string, 
+    pass_enc?: Buffer<ArrayBufferLike>, 
+    token?: Buffer<ArrayBufferLike> 
+}
+
+interface User_ {
+    username : string
+    id : number | undefined
+    role : string | undefined
+    password: string | undefined
+}
+
+interface ReadFilter {
+    id?:number
+    name?:string
+    role?:string
+
+}
+
+interface Changes {
+    password?: string
+    token?: Buffer<ArrayBufferLike>
+    role?: string
 }
 
 export class User extends baseModel.baseModel {
@@ -239,7 +292,7 @@ export class User extends baseModel.baseModel {
             type: "any"
         }
     }
-    constructor(fields : {id?: number, name: string, role?: string, password?: string, pass_enc?: Buffer<ArrayBufferLike>, token?: Buffer<ArrayBufferLike> }) {
+    constructor(fields : UserFields) {
         super(fields)
         this.id = fields.id
         this.name = fields.name
@@ -302,14 +355,31 @@ export class User extends baseModel.baseModel {
         if(values.length<6) {
             throw new Error("Invalid user csv: need 6 columns")
         }
-        return new User({
-            id: (values[0] != "") ? parseInt(values[0] as string) : undefined,
-            name: values[1],
-            role: values[2],
-            password: (values[3] != "") ? values[3] : undefined,
-            pass_enc: (values[4] != "") ? Buffer.from(values[4]!) : undefined,
-            token: (values[5] != "") ? Buffer.from(values[5]!) : undefined
-        })
+        const [id, name, role, password, pass_enc, token] = values as [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string
+        ];
+        const user_fields : any = {
+            name: name,
+            role: role
+        } 
+        if(id != "") {
+            user_fields.id = parseInt(id)
+        }
+        if(password != "") {
+            user_fields.password = password
+        }
+        if(pass_enc != "") {
+            user_fields.pass_enc = Buffer.from(pass_enc!)
+        }
+        if(token != "") {
+            user_fields.token = Buffer.from(token!)
+        }
+        return new User(user_fields)
     }
 
     toJSON() {
@@ -345,8 +415,7 @@ export class User extends baseModel.baseModel {
             var inserted = await pool.query("UPDATE users set pass_enc=coalesce($1,pass_enc), role=coalesce($2,role), token=coalesce($4,token) where name=$3 RETURNING name,pass_enc,role,token",[pass_enc, this.role, this.name, token])
         }
         if(!inserted.rows.length) {
-            console.error("creation failed")
-            return
+            throw new Error("creation failed")
         }
         this.name = inserted.rows[0].name
         this.pass_enc = inserted.rows[0].pass_enc
@@ -354,83 +423,96 @@ export class User extends baseModel.baseModel {
         this.token = inserted.rows[0].token
         return this
     }
-    static async create(users,options,client) {
-        users = (Array.isArray(users)) ? users.map(u=>new internal.user(u)) : [new internal.user(users)]
+    static async create(users : UserFields|UserFields[],options : any, client : typeof Client) {
+        const created_ = (Array.isArray(users)) ? users.map(u=>new User(u)) : [new User(users)]
         const created = []
-        for(var i in users) {
-            created.push(await users[i].create())
+        for(var user of created_) {
+            created.push(await user.create())
         }
         return created
     }
-    static async read(filter={},options,client) {
+    static async read(filter : ReadFilter={},options : any) {
+        if(!pool) {
+            throw new Error("Pool not initialized")
+        }
         const result = await pool.query("SELECT id,name,role,pass_enc,token from users order by id")
-        const users = result.rows.map(r=> new internal.user(r))
+        const users = result.rows.map(r=> new User(r))
         if(filter.id) {
             var matches = users.filter(u=>u.id == filter.id)
             if(!matches.length) {
                 console.error("Couldn't find user")
-                return
+                return [] as User[]
             }
-            return matches[0]
+            return matches
         } else if (filter.name) {
             var matches = users.filter(u=>u.name == filter.name)
             if(!matches.length) {
                 console.error("Couldn't find user")
-                return
+                return [] as User[]
             }
-            return matches[0]
+            return matches
         } else if (filter.role) {
             var matches = users.filter(u=>u.role == filter.role)
             if(!matches.length) {
                 console.error("Couldn't find users")
-                return []
+                return [] as User[]
             }
             return matches
         }
         return users
     }
-    async update(changes={},client) {
+    
+    async update(changes : Changes={}) {
         const valid_keys = ["password","token","role"]
         Object.keys(changes).forEach(key=>{
             if(valid_keys.indexOf(key) < 0) {
                 throw(`Invalid update key ${key}`)
             }
-            this[key] = changes[key]
         })
+        if(changes.password) {
+            this.password = changes.password
+        }
+        if(changes.token) {
+            this.token = changes.token
+        }
+        if(changes.role) {
+            this.role = changes.role
+        }
         return this.create()
     }
-    static async update(filter={},changes={},client) {
-        const users = await internal.user.read(filter)
-        const updated = []
-        if(Array.isArray(users))    {
-            for(var i in users) {
-                updated.push(await users[i].update(changes,client))
-            }
-        } else {
-            updated.push(await users.update(changes,client))
+
+    static async update(filter={},changes={}) {
+        const users = await User.read(filter,undefined)
+        const updated : User[] = []
+        for(const user of users) {
+            updated.push(await user.update(changes))
         }
         return updated
     }
-    async delete(options,client) {
+
+    async delete(options : any) {
+        if(!pool) {
+            throw new Error("Pool not initialized")
+        }
         const deleted = await pool.query("DELETE FROM users WHERE name=$1 RETURNING id,name,role",[this.name])
         if(deleted.rows.length) {
-            return new internal.user(deleted.rows[0])
+            return new User(deleted.rows[0])
         } else {
             console.error("Nothing deleted")
             return
         }
     }
-    static async delete(filter,options,client) {
-        const users = await internal.user.read(filter,undefined,client)
+
+    static async delete(filter : ReadFilter) {
+        const users = await User.read(filter,undefined)
         // console.log(users)
-        const deleted = []
-        if(Array.isArray(users)) {
-            for(var i in users) {
-                console.log("Deleting user " + users[i].name)
-                deleted.push(await users[i].delete(options,client))
+        const deleted : User[] = []
+        for(var user of users) {
+            console.log("Deleting user " + user.name)
+            const deleted_ = await user.delete({})
+            if(deleted_) {
+                deleted.push(deleted_)
             }
-        } else {
-            return users.delete(options,client)
         }
         return deleted
     }    
