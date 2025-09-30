@@ -3,17 +3,23 @@
   "name": "a5auth",
   "version": "1.0.0",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "import": "./dist/esm/src/index.js",
+      "require": "./dist/cjs/src/index.js"
+    }
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json",
+    "prepublishOnly": "npm run build",
     "clean": "rm -rf dist"
   },
   "author": "INA",
   "license": "MIT",
   "dependencies": {
+    "a5base": "file:../a5base",
+    "csv-string": "^4.1.1",
     "express": "^5.1.0",
     "express-flash": "^0.0.2",
     "express-session": "^1.18.2",
@@ -32,6 +38,7 @@
     "@types/passport-local": "^1.0.38",
     "@types/pg": "^8.15.5",
     "@types/session-file-store": "^1.2.5",
-    "@types/uuid": "^11.0.0"
+    "@types/uuid": "^11.0.0",
+    "tsx": "^4.20.6"
   }
 }

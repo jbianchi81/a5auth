@@ -2,6 +2,7 @@ import type { Express, Request, Response } from 'express';
 import { Pool } from 'pg';
 import passport from 'passport';
 import filestore from 'session-file-store';
+export { User } from './userAdmin';
 export interface AuthenticationConfig {
     rest: {
         index: any;

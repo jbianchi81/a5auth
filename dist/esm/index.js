@@ -6,6 +6,7 @@ import filestore from 'session-file-store';
 import flash from 'express-flash';
 import crypto from 'crypto';
 import qs from "qs";
+export { User } from './userAdmin';
 export class AuthUser {
     constructor(user) {
         this.authenticated = false;

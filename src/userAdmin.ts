@@ -272,7 +272,7 @@ export class User extends baseModel.baseModel {
 
     token: Buffer<ArrayBufferLike>  | undefined
 
-    static _fields = {
+    static _fields : { [x : string]: baseModel.ModelField }= {
         id: {
             type: "integer"
         },

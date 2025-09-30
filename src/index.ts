@@ -9,6 +9,8 @@ import flash from 'express-flash'
 import crypto from 'crypto'
 import qs from "qs";
 
+export {User} from './userAdmin'
+
 export interface AuthenticationConfig {
 	rest: {
 		index: any;
