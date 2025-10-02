@@ -1,7 +1,16 @@
 import {setGlobal, baseModel} from 'a5base'
+import {A5Config} from 'a5base'
+
+interface Config extends A5Config {
+    rest: { 
+        base_url?: string
+        skip_authentication?: boolean
+    }
+}
+
 const g = setGlobal.default()
 const pool = g.pool
-const config = g.config
+const config = g.config as Config
 import { createHash } from 'crypto'    
 const internal = {}
 import { parse } from 'csv-string'
@@ -46,7 +55,7 @@ export async function createUser(req : Request,res : Response) {    // ?password
     if(req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
         console.debug(user)
         var data : any = {...user}
-        data.base_url = config.rest.base_url
+        data.base_url = (config) ? (config.rest) ? config.rest.base_url : undefined : undefined
         res.render('user_updated',data)
     } else {
         res.send(user)
@@ -431,12 +440,23 @@ export class User extends baseModel.baseModel {
         }
         return created
     }
-    static async read(filter : ReadFilter={},options : any) {
+    static async read(filter : ReadFilter,options? : any) : Promise<User[]>
+    static async read(id : number,options? : any) : Promise<User|undefined>
+    static async read(filter : ReadFilter | number={},options?: any) : Promise<User[]|User|undefined>{
         if(!pool) {
             throw new Error("Pool not initialized")
         }
+        if(typeof filter == "number") {
+            const result = await pool.query("SELECT id,name,role,pass_enc,token from users WHERE id=$1", [filter])
+            if(result.rows.length) {
+                console.error("Couldn't find user")
+                return
+            }
+            return new this(result.rows[0])
+
+        }
         const result = await pool.query("SELECT id,name,role,pass_enc,token from users order by id")
-        const users = result.rows.map(r=> new User(r))
+        const users = result.rows.map(r=> new this(r))
         if(filter.id) {
             var matches = users.filter(u=>u.id == filter.id)
             if(!matches.length) {

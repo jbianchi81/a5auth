@@ -21,7 +21,7 @@
   "author": "INA",
   "license": "MIT",
   "dependencies": {
-    "a5base": "file:../a5base",
+    "a5base": "^1.0.3",
     "csv-string": "^4.1.1",
     "express": "^5.1.0",
     "express-flash": "^0.0.2",

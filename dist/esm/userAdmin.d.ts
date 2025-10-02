@@ -64,7 +64,8 @@ export declare class User extends baseModel.baseModel {
     encryptPassword(): string | Buffer<ArrayBuffer> | undefined;
     create(): Promise<this>;
     static create(users: UserFields | UserFields[], options: any, client: typeof Client): Promise<User[]>;
-    static read(filter: ReadFilter | undefined, options: any): Promise<User[]>;
+    static read(filter: ReadFilter, options?: any): Promise<User[]>;
+    static read(id: number, options?: any): Promise<User | undefined>;
     update(changes?: Changes): Promise<this>;
     static update(filter?: {}, changes?: {}): Promise<User[]>;
     delete(options: any): Promise<User | undefined>;

@@ -54,7 +54,7 @@ async function createUser(req, res) {
     if (req.headers['content-type'] == "multipart/form-data" || req.headers['content-type'] == "application/x-www-form-urlencoded") {
         console.debug(user);
         var data = { ...user };
-        data.base_url = config.rest.base_url;
+        data.base_url = (config) ? (config.rest) ? config.rest.base_url : undefined : undefined;
         res.render('user_updated', data);
     }
     else {
@@ -380,8 +380,16 @@ class User extends a5base_1.baseModel.baseModel {
         if (!pool) {
             throw new Error("Pool not initialized");
         }
+        if (typeof filter == "number") {
+            const result = await pool.query("SELECT id,name,role,pass_enc,token from users WHERE id=$1", [filter]);
+            if (result.rows.length) {
+                console.error("Couldn't find user");
+                return;
+            }
+            return new this(result.rows[0]);
+        }
         const result = await pool.query("SELECT id,name,role,pass_enc,token from users order by id");
-        const users = result.rows.map(r => new User(r));
+        const users = result.rows.map(r => new this(r));
         if (filter.id) {
             var matches = users.filter(u => u.id == filter.id);
             if (!matches.length) {
